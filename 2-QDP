@@ -1,0 +1,222 @@
+// App.js
+import React, { useState, useRef } from 'react';
+import { PDFDocument } from 'pdf-lib';
+import axios from 'axios';
+
+function App() {
+  const [step, setStep] = useState(1);
+  const [files, setFiles] = useState([]);
+  const [metadata, setMetadata] = useState({
+    projectName: '',
+    clientName: '',
+    isSensitive: false
+  });
+  const [signature, setSignature] = useState(null);
+  const [progress, setProgress] = useState(0);
+  const [status, setStatus] = useState('');
+  const [error, setError] = useState('');
+  const [token, setToken] = useState('');
+  const [saveToCloud, setSaveToCloud] = useState(false);
+  const signatureCanvas = useRef(null);
+
+  // Login function
+  const handleLogin = async () => {
+    try {
+      const response = await axios.post('/api/login', {
+        username: 'admin',
+        password: 'password'
+      });
+      setToken(response.data.token);
+      setError('');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Login failed');
+    }
+  };
+
+  // File upload handler with progress
+  const handleFileUpload = async (e) => {
+    const selectedFiles = Array.from(e.target.files);
+    setFiles(selectedFiles);
+    
+    // Validate files
+    for (const file of selectedFiles) {
+      if (file.type !== 'application/pdf') {
+        setError('Only PDF files are allowed');
+        return;
+      }
+    }
+  };
+
+  // Signature capture
+  const handleSaveSignature = () => {
+    if (signatureCanvas.current) {
+      setSignature(signatureCanvas.current.toDataURL());
+    }
+  };
+
+  // Generate QDP
+  const generateQdp = async () => {
+    if (!token) {
+      setError('Please login first');
+      return;
+    }
+
+    setStatus('Preparing documents...');
+    setProgress(10);
+
+    try {
+      const formData = new FormData();
+      files.forEach(file => formData.append('documents', file));
+      formData.append('metadata', JSON.stringify(metadata));
+      if (signature) formData.append('signature', signature);
+      formData.append('saveToCloud', saveToCloud);
+
+      setStatus('Uploading files...');
+      setProgress(30);
+
+      const response = await axios.post('/api/generate-qdp', formData, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'multipart/form-data'
+        },
+        onUploadProgress: (progressEvent) => {
+          const percentCompleted = Math.round(
+            (progressEvent.loaded * 100) / progressEvent.total
+          );
+          setProgress(30 + percentCompleted * 0.5); // 30-80% for upload
+        }
+      });
+
+      setStatus('Generating final package...');
+      setProgress(80);
+
+      // Download PDF
+      const pdfBytes = Uint8Array.from(
+        atob(response.data.pdf), 
+        c => c.charCodeAt(0)
+      );
+      
+      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = response.data.fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      setStatus('Complete!');
+      setProgress(100);
+
+      if (response.data.cloudUrl) {
+        alert(`QDP also saved to cloud: ${response.data.cloudUrl}`);
+      }
+
+    } catch (err) {
+      setError(err.response?.data?.error || 'Generation failed');
+      setProgress(0);
+      setStatus('');
+    }
+  };
+
+  return (
+    <div className="app">
+      {!token ? (
+        <div className="login">
+          <h2>Login</h2>
+          <button onClick={handleLogin}>Login as Admin</button>
+          {error && <p className="error">{error}</p>}
+        </div>
+      ) : (
+        <div className="generator">
+          <div className="progress-bar" style={{ width: `${progress}%` }}></div>
+          {status && <p className="status">{status}</p>}
+
+          {step === 1 && (
+            <div className="step">
+              <h2>Upload Documents</h2>
+              <input 
+                type="file" 
+                multiple 
+                accept=".pdf" 
+                onChange={handleFileUpload}
+              />
+              <div className="file-list">
+                {files.map((file, i) => (
+                  <div key={i}>{file.name}</div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {step === 2 && (
+            <div className="step">
+              <h2>Enter Project Details</h2>
+              <input
+                placeholder="Project Name"
+                value={metadata.projectName}
+                onChange={(e) => setMetadata({...metadata, projectName: e.target.value})}
+              />
+              <input
+                placeholder="Client Name"
+                value={metadata.clientName}
+                onChange={(e) => setMetadata({...metadata, clientName: e.target.value})}
+              />
+              <label>
+                <input
+                  type="checkbox"
+                  checked={metadata.isSensitive}
+                  onChange={(e) => setMetadata({...metadata, isSensitive: e.target.checked})}
+                />
+                Contains sensitive data (encrypt PDF)
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={saveToCloud}
+                  onChange={(e) => setSaveToCloud(e.target.checked)}
+                />
+                Save to Google Drive
+              </label>
+            </div>
+          )}
+
+          {step === 3 && (
+            <div className="step">
+              <h2>Add Approval Signature</h2>
+              <canvas 
+                ref={signatureCanvas}
+                width={500}
+                height={200}
+                style={{ border: '1px solid #000' }}
+              />
+              <button onClick={handleSaveSignature}>Save Signature</button>
+              {signature && <img src={signature} alt="Saved Signature" />}
+            </div>
+          )}
+
+          {step === 4 && (
+            <div className="step">
+              <h2>Generate QDP</h2>
+              <button onClick={generateQdp}>Generate & Download</button>
+            </div>
+          )}
+
+          <div className="navigation">
+            {step > 1 && (
+              <button onClick={() => setStep(step - 1)}>Back</button>
+            )}
+            {step < 4 && (
+              <button onClick={() => setStep(step + 1)}>Next</button>
+            )}
+          </div>
+
+          {error && <p className="error">{error}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default App;
