@@ -1,0 +1,51 @@
+async function generateFinalQdp() {
+    const deliveryMethod = document.querySelector('input[name="delivery"]:checked').id;
+    
+    // Show loading state
+    generateQdp.disabled = true;
+    generateQdp.textContent = 'Generating QDP...';
+    
+    try {
+        // Prepare form data
+        const formData = new FormData();
+        
+        // Add uploaded files
+        state.uploadedFiles.forEach(fileObj => {
+            formData.append('documents', fileObj.file);
+        });
+        
+        // Add metadata and signature
+        formData.append('metadata', JSON.stringify(state.metadata));
+        if (state.signature) {
+            formData.append('signature', state.signature);
+        }
+        
+        // Send to backend
+        const response = await fetch('http://localhost:3001/api/generate-qdp', {
+            method: 'POST',
+            body: formData,
+        });
+        
+        if (!response.ok) throw new Error('Failed to generate QDP');
+        
+        // Get PDF blob
+        const pdfBlob = await response.blob();
+        
+        // Trigger download
+        const url = URL.createObjectURL(pdfBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `QDP_${state.metadata.projectName || 'Package'}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Failed to generate QDP. Please try again.');
+    } finally {
+        generateQdp.disabled = false;
+        generateQdp.textContent = 'Generate QDP';
+    }
+}
