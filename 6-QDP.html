@@ -1,0 +1,185 @@
+<!-- [Previous HTML and CSS remains exactly the same until the JavaScript section] -->
+
+<script>
+    // [Previous JavaScript remains the same until the mergeDocuments function]
+
+    // Merge all documents into final PDF with page numbering
+    async function mergeDocuments(titlePageBytes, tocPageBytes) {
+        const { PDFDocument, rgb } = PDFLib;
+        
+        // Create a new PDF document for merging
+        const mergedPdf = await PDFDocument.create();
+        
+        // Add title page (page 1)
+        const titlePdf = await PDFDocument.load(titlePageBytes);
+        const [titlePage] = await mergedPdf.copyPages(titlePdf, [0]);
+        mergedPdf.addPage(titlePage);
+        
+        // Add table of contents (page 2)
+        const tocPdf = await PDFDocument.load(tocPageBytes);
+        const [tocPage] = await mergedPdf.copyPages(tocPdf, [0]);
+        mergedPdf.addPage(tocPage);
+        
+        // Track page numbers for TOC references
+        const tocReferences = {};
+        let currentPageNumber = 3; // Start counting after title and TOC
+        
+        // Process each uploaded PDF
+        for (const fileObj of state.uploadedFiles) {
+            try {
+                const file = fileObj.file;
+                const arrayBuffer = await file.arrayBuffer();
+                const pdfDoc = await PDFDocument.load(arrayBuffer);
+                
+                // Store the starting page for this document type
+                if (!tocReferences[fileObj.type]) {
+                    tocReferences[fileObj.type] = currentPageNumber;
+                }
+                
+                // Copy all pages from the uploaded PDF
+                const pageIndices = Array.from({ length: pdfDoc.getPageCount() }, (_, i) => i);
+                const pages = await mergedPdf.copyPages(pdfDoc, pageIndices);
+                
+                // Add pages with page numbers
+                for (const page of pages) {
+                    const newPage = mergedPdf.addPage(page);
+                    
+                    // Add page number footer (skip title and TOC pages)
+                    if (currentPageNumber > 2) {
+                        const { width, height } = newPage.getSize();
+                        newPage.drawText(`Page ${currentPageNumber - 2}`, {
+                            x: width - 50,
+                            y: 30,
+                            size: 10,
+                            color: rgb(0.5, 0.5, 0.5),
+                        });
+                    }
+                    
+                    currentPageNumber++;
+                }
+                
+            } catch (error) {
+                console.error(`Error processing ${fileObj.file.name}:`, error);
+                throw new Error(`Failed to process ${fileObj.file.name}. Please ensure it's a valid PDF file.`);
+            }
+        }
+        
+        // Now update the TOC with correct page numbers
+        return await updateTocWithPageNumbers(mergedPdf, tocReferences);
+    }
+
+    // Update TOC with correct page numbers
+    async function updateTocWithPageNumbers(pdfDoc, tocReferences) {
+        const { rgb } = PDFLib;
+        
+        // Get the TOC page (page 2)
+        const tocPage = pdfDoc.getPage(1);
+        const { width, height } = tocPage.getSize();
+        
+        // Clear existing TOC content (except the title)
+        tocPage.drawRectangle({
+            x: 0,
+            y: 0,
+            width,
+            height: height - 100,
+            color: rgb(1, 1, 1),
+            opacity: 1,
+        });
+        
+        // Redraw the TOC title
+        tocPage.drawText('TABLE OF CONTENTS', {
+            x: 50,
+            y: height - 50,
+            size: 18,
+            color: rgb(0, 0, 0),
+        });
+        
+        // Add document list with page numbers
+        let yPosition = height - 100;
+        
+        // Title Page reference
+        tocPage.drawText('1. Title Page', {
+            x: 50,
+            y: yPosition,
+            size: 12,
+            color: rgb(0, 0, 0),
+        });
+        tocPage.drawText('1', {
+            x: width - 100,
+            y: yPosition,
+            size: 12,
+            color: rgb(0, 0, 0),
+        });
+        yPosition -= 20;
+        
+        // TOC self-reference
+        tocPage.drawText('2. Table of Contents', {
+            x: 50,
+            y: yPosition,
+            size: 12,
+            color: rgb(0, 0, 0),
+        });
+        tocPage.drawText('2', {
+            x: width - 100,
+            y: yPosition,
+            size: 12,
+            color: rgb(0, 0, 0),
+        });
+        yPosition -= 30;
+        
+        // Group documents by type
+        const docGroups = {};
+        state.uploadedFiles.forEach(file => {
+            if (!docGroups[file.type]) {
+                docGroups[file.type] = [];
+            }
+            docGroups[file.type].push(file);
+        });
+        
+        // Add documents to TOC with page numbers
+        let sectionNumber = 3;
+        Object.keys(docGroups).forEach(type => {
+            const docType = requiredDocuments.find(d => d.id === type)?.name || type;
+            const startPage = tocReferences[type] - 2; // Subtract 2 to exclude title and TOC
+            
+            tocPage.drawText(`${sectionNumber}. ${docType}`, {
+                x: 50,
+                y: yPosition,
+                size: 12,
+                color: rgb(0, 0, 0),
+            });
+            tocPage.drawText(startPage.toString(), {
+                x: width - 100,
+                y: yPosition,
+                size: 12,
+                color: rgb(0, 0, 0),
+            });
+            yPosition -= 20;
+            sectionNumber++;
+            
+            // List individual files under each type
+            docGroups[type].forEach((file, idx) => {
+                const filePage = startPage + (docGroups[type].indexOf(file) * file.file.size / 1000); // Approximate page number
+                tocPage.drawText(`   ${sectionNumber-1}.${idx+1} ${file.displayName || file.file.name}`, {
+                    x: 70,
+                    y: yPosition,
+                    size: 10,
+                    color: rgb(0.3, 0.3, 0.3),
+                });
+                tocPage.drawText(Math.round(filePage).toString(), {
+                    x: width - 100,
+                    y: yPosition,
+                    size: 10,
+                    color: rgb(0.3, 0.3, 0.3),
+                });
+                yPosition -= 15;
+            });
+            
+            yPosition -= 10;
+        });
+        
+        return pdfDoc;
+    }
+
+    // [Rest of the JavaScript remains the same]
+</script>
